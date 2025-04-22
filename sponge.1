@@ -1,0 +1,37 @@
+.TH SPONGE 1
+.
+.SH NAME
+sponge \- soak up standard input and write to files
+.
+.SH SYNOPSIS
+.B sponge
+[OPTION]... [FILE]...
+.
+.SH DESCRIPTION
+.PP
+Soak up standard input and write to FILE(s).
+.PP
+With no FILE, or when FILE is \-, read standard input.
+.TP
+.B \-a
+Append to file(s)
+.TP
+.B \-h
+display Help and exit
+.
+.SH EXAMPLES
+.TP
+cat file_1 file_2 | sponge file_1
+Soak up the concatenated contents of file_1 and file_2, then write them to file_1.
+.TP
+cat file_1 file_2 | sponge -a file_1
+Same as previous, but append to file_1 instead of overwriting.
+.TP
+cat file_1 | sponge file_1 -
+"Sponge" to file_1 and also write to standard output.
+.
+.SH AUTHOR
+Written by Gal Zeira <gal_zeira@protonmail.com>.
+.
+.SH "REPORTING BUGS"
+Mail directly to the author.
