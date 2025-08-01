@@ -123,7 +123,7 @@ int main(int argc, char **argv) {
 
 	for (size_t i = 0; i < nargs; i++) {
 		if (!dump_file(args[i], &s, aflag)) {
-			error(EXIT_FAILURE, errno, "error reading from file \"%s\"", args[i]);
+			error(EXIT_FAILURE, errno, "error writing to file \"%s\"", args[i]);
 		}
 	}
 
