@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <error.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,133 +10,122 @@ typedef struct {
 	size_t cap;
 	size_t len;
 	char *data;
-} StringBuilder;
+} String;
 
-StringBuilder *sb_init() {
-	StringBuilder *sb = malloc(sizeof(StringBuilder));
-	if (sb == NULL) {
-		char *msg = strerror(errno);
-		fprintf(stderr, "%s\n", msg);
-		exit(EXIT_FAILURE);
+void *string_grow(String *s, size_t delta) {
+	size_t new_cap = s->cap > 0 ? s->cap : delta;
+	while (new_cap < s->len + delta) {
+		new_cap *= 2;
 	}
 
-	sb->cap = 0;
-	sb->len = 0;
-	return sb;
-}
-
-void sb_del(StringBuilder *sb) {
-	free(sb->data);
-	free(sb);
-}
-
-void *sb_extend(StringBuilder *sb, const char *s, size_t len) {
-	if (sb->cap < sb->len + len) {
-		sb->cap = sb->len + len;
-		sb->data = realloc(sb->data, sb->cap * sizeof(char));
-		if (sb->data == NULL) {
-			char *msg = strerror(errno);
-			fprintf(stderr, "%s\n", msg);
-			exit(EXIT_FAILURE);
+	if (s->cap < new_cap) {
+		s->data = realloc(s->data, sizeof(char) * new_cap);
+		if (s->data == NULL) {
+			error(EXIT_FAILURE, errno, "error growing String");
 		}
+		s->cap = new_cap;
 	}
 
-	memcpy(sb->data + sb->len, s, len);
-	sb->len += len;
-
-	return sb;
+	return s;
 }
 
-void *load_stdin(StringBuilder *sb) {
-	char buf[BUFSIZ];
-
-	for (;;) {
-		size_t n = fread(buf, sizeof(char), BUFSIZ, stdin);
-		sb_extend(sb, buf, n);
-
-		if (n != BUFSIZ * sizeof(char)) {
-			if (ferror(stdin)) {
-				fprintf(stderr, "error reading STDIN\n");
-				exit(EXIT_FAILURE);
-			}
-			break;
-		}
-	}
-
-	return sb;
-}
-
-bool dump(char *filename, char *write_mode, StringBuilder *sb) {
+bool read_file(const char *filename, String *s) {
 	FILE *file;
-
 	if (strcmp(filename, "-") == 0) {
-		file = stdout;
+		file = stdin;
 	} else {
-		file = fopen(filename, write_mode);
+		FILE *file = fopen(filename, "r");
 		if (file == NULL) {
-			char *msg = strerror(errno);
-			fprintf(stderr, "error opening file '%s': %s\n", filename, msg);
 			return false;
 		}
 	}
 
-	bool ok = true;
-	size_t n = fwrite(sb->data, sizeof(char), sb->len, file);
-	if (n != sb->len && ferror(file)) {
-		fprintf(stderr, "error writing to file '%s'\n", filename);
-		ok = false;
-	}
-
-	if (strcmp(filename, "-") != 0) {
-		if (fclose(file) != 0) {
-			char *msg = strerror(errno);
-			fprintf(stderr, "error closing file '%s': %s\n", filename, msg);
-			ok = false;
+	for (int i = 0; true; i++) {
+		string_grow(s, BUFSIZ);
+		size_t n = fread(s->data + s->len, sizeof(char), BUFSIZ, file);
+		s->len += n;
+		if (n == BUFSIZ) {
+			continue;
+		} else if (ferror(file)) {
+			if (file != stdin) {
+				fclose(file);
+			}
+			return false;
+		} else {
+			break;
 		}
 	}
 
+	bool ok = file == stdin ? true : !(bool)fclose(file);
+	return ok;
+}
+
+bool dump_file(const char *filename, String *s, bool append) {
+	FILE *file;
+	if (strcmp(filename, "-") == 0) {
+		file = stdout;
+	} else {
+		file = fopen(filename, append ? "a" : "w");
+		if (file == NULL) {
+			return false;
+		}
+	}
+
+	size_t n = fwrite(s->data, sizeof(char), s->len, file);
+	if (n != s->len && ferror(file)) {
+		if (file != stdin) {
+			fclose(file);
+		}
+		return false;
+	}
+
+	bool ok = file == stdout ? true : !(bool)fclose(file);
 	return ok;
 }
 
 int main(int argc, char **argv) {
 	int opt;
-	char *write_mode = "w";
+	bool aflag = false;
 	while ((opt = getopt(argc, argv, "ah")) != -1) {
 		switch (opt) {
 		case 'a':
-			write_mode = "a";
+			aflag = true;
 			break;
 		case 'h':
 			printf("Usage: %s [OPTION]... [FILE]...\n", argv[0]);
 			printf("Soak up standard input and write to FILE(s).\n");
 			printf("\n");
-			printf("With no FILE, or when file is -, write to standard output.\n");
+			printf("With no FILE, or when FILE is -, write to standard output.\n");
 			printf("\n");
 			printf("\t-a\tAppend to file instead of overwriting it\n");
 			printf("\t-h\tprint this Help and exit\n");
-			exit(EXIT_SUCCESS);
-		default: /* '?' */
+			return EXIT_SUCCESS;
+		default:
 			fprintf(stderr, "Usage: %s [OPTION]... [FILE]...\n", argv[0]);
 			fprintf(stderr, "try %s -h for help\n", argv[0]);
-			exit(EXIT_FAILURE);
+			return EXIT_FAILURE;
 		}
 	}
 
-	StringBuilder *sb = sb_init();
-	load_stdin(sb);
-
-	if (optind == argc) {
-		// no args; dump to stdout and return
-		return dump("-", write_mode, sb) ? 0 : 1;
+	String s;
+	if (!read_file("-", &s)) {
+		error(EXIT_FAILURE, errno, "error reading from stdin");
 	}
 
-	int ret = EXIT_SUCCESS;
-	for (int i = optind; i < argc; i++) {
-		bool ok = dump(argv[i], write_mode, sb);
-		if (!ok) {
-			ret = EXIT_FAILURE;
+	size_t nargs = argc - optind;
+	char **args;
+	if (nargs < 1) {
+		nargs = 1;
+		args = (char *[]){"-"};
+	} else {
+		args = argv + optind;
+	}
+
+	for (size_t i = 0; i < nargs; i++) {
+		if (!dump_file(args[i], &s, aflag)) {
+			error(EXIT_FAILURE, errno, "error reading from file \"%s\"", args[i]);
 		}
 	}
 
-	return ret;
+	return EXIT_SUCCESS;
 }
