@@ -34,7 +34,7 @@ bool read_file(const char *filename, String *s) {
 	if (strcmp(filename, "-") == 0) {
 		file = stdin;
 	} else {
-		FILE *file = fopen(filename, "r");
+		file = fopen(filename, "r");
 		if (file == NULL) {
 			return false;
 		}
